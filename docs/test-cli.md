@@ -1,0 +1,150 @@
+# CLI 使用
+
+CLI 用于驱动服务端、执行端到端检查及本地预览 widget。[本地预览](#本地预览-widget)不需要服务端或凭据；其余服务端命令先完成[本地运行](development.md)，配置 `WEBCLIP_URL` 和 `WEBCLIP_USER`。URL 必填，用户标识默认是 `cli`。以下命令在仓库根目录执行；`<session>` 替换为创建会话返回的 ID。
+
+```bash
+export WEBCLIP_URL=http://localhost:8787
+export WEBCLIP_USER=me
+```
+
+普通请求无需服务 token。test-cli 不会自动读取 `.dev.vars`，也不使用模型网关的 `LLM_API_KEY`。这些环境变量在执行命令的同一个终端中设置。
+
+```bash
+npm run test-cli -- new "某个页面"          # 建会话
+npm run test-cli -- prompt "…"              # 跑一轮，流式打印；会话自动建
+npm run test-cli -- prompt <session> "…"    # 接着某个会话跑
+echo "你好啊" | npm run test-cli -- chat     # 一句话就说完，会话自动建
+npm run test-cli -- chat                    # 连续对话，每行一轮
+npm run test-cli -- chat <session>          # 接着已有会话聊
+npm run test-cli -- events <session> 0      # 回放并跟随
+npm run test-cli -- timeline <session>      # 这一轮的时间花在哪
+npm run test-cli -- sessions                # 列表
+npm run test-cli -- abort <session>
+npm run test-cli -- rm <session>           # 删除会话
+```
+
+`chat` 里以 `/` 开头的行是命令，其余按原文发送；想发以斜杠开头的文本就写 `//`。
+
+`preview_widget` 在实时输出和历史回放中显示 `validation: passed` 或 `validation: failed`，并列出尺寸、语法检查和错误原因；重复的错误合并显示，截图与页面全文不打印。浏览器启动等工具执行异常显示 `ERROR`。其他工具的 `ok` 仅表示执行未报错。
+
+| 命令 | 作用 |
+|---|---|
+| `/help` | 列出全部命令 |
+| `/list` | 所有会话，当前一条标 `*` |
+| `/new [title]` | 新建并切过去 |
+| `/switch <session>` | 切到已有会话 |
+| `/session` | 当前会话、游标、暂存文件 |
+| `/history [since]` | 回放本会话的日志 |
+| `/file [path\|clear]` | 为下一条消息暂存文件 |
+| `/gzip` | 切换上传是否压缩 |
+| `/abort` | 标记当前轮次为中止 |
+| `/rm [session]` | 删除会话，默认当前 |
+| `/quit` | 退出 |
+
+交互命令与别名以 `/help` 为准，它由 [CLI 的命令定义](../test-cli/index.mjs)生成。切换会话会把游标归零：序号只在产生它的那条日志里有意义。
+
+
+**首轮带上网页与截图**：仓库提供 [HTML 样例](../test-cli/fixtures/source.html)，截图需要自行准备；也可以把两处路径替换为自己的文件。
+
+```bash
+npm run test-cli -- prompt \
+  --file ./test-cli/fixtures/source.html --file ./screenshot.png --gzip \
+  "读 source.html，把报价做成 widget"
+```
+
+会话可省：不给就新建一个并打印它的 id。首个位置上的裸 UUID 当作会话，`--session <id>` 是它的显式写法。
+
+`--file` 可给零个、一个或多个，文件写入工作区根目录：路径中的目录部分会被剥掉，`./a/b/source.html` 落成 `/source.html`，所以提示词里直接按文件名引用。`--gzip` 只压缩文本类扩展名——服务端解压后再落盘，因此 `grep` 看到的是真实字节；PNG 之类不会被再压一遍。
+
+
+`abort` 的执行限制、回放与重连语义见[客户端协议](protocol.md)。CLI 的 `events` 读取一次流；网络断开后需要再次调用并传入已收到的游标。
+
+## 框选页面内容并生成 widget
+
+```bash
+npm run test-cli -- prompt "帮我做个微软股价的 widget" --url "https://example.com/quote" --select
+npm run test-cli -- prompt "把这几个区域做成 widget" --file ./source.html --select
+```
+
+`--url` 只接受 HTTP/HTTPS，与 --file 中的 HTML 来源互斥；非 HTML 附件可继续通过 --file 上传。多个 HTML 来源、缺失 URL、没有页面来源的 --select 会报错。
+
+浏览器页面随窗口大小调整，框选面板固定在左上角。原网页脚本正常运行，load 后等 3 秒进入框选。拖框吸附完整 DOM 区块，可多选、删除、清空及切换浏览模式；父/子区块按钮用于调整范围。最多 8 个区域，同一元素不会重复添加。浏览模式可先登录或关闭弹窗；整页导航后旧选区清空。iframe 和 Shadow DOM 内部暂不支持，小图表不能靠截图像素生成可更新数据提取。
+
+每个区域保留从文档根开始的正向绝对 XPath 和 DOM 文本，短小纯文本可省略截图；有图区域缩放到不超过 768px 后拼成一张不超过 1200×1200px 的编号图。点击预览检查清晰度，可返回重选，再点击确认发送。capture v2、当前 DOM 直接序列化的 source.html、配对 source.dom.json、拼图和 prompt 同轮提交；本地原文件不覆盖。数据定位与格式见[Capture 协议](protocol.md#capture区域与图片)。
+
+有选区时，source.html 完整保留选区、祖先链及沿途前方兄弟元素的结构和属性，清空选区外的文本、注释及 script/style 正文；逐层删除最后一个包含选区的分支之后的无关兄弟节点。多选保留通往全部选区的路径，重叠部分不复制。选区内部的数据和 SVG 保留；无选区时不裁剪页面。正向 XPath 精简前后必须命中同一区域，不能根据删减后的文档推断全局 id 唯一性或倒序位置。
+
+CLI 在实时 DOM 的克隆上裁剪，用结构快照重建并检查选区相等与 XPath 唯一命中；不增加 tbody 或拆开嵌套链接。编码、裁剪及 XPath 定位读取原生 DOM 结构属性，避免自定义元素的同名业务属性改变标签或节点关系。实时网页保持不变。source.html 供阅读，重新解析它仍可能改变结构；离线验证请用 `preview --snapshot`。无法无损保留或超过文件/节点限额时明确报错，请缩小选区。v1 的 sourceXPath 仍可读取，旧捕获需要重新生成才能获得结构快照。
+
+**不加 --select 的唯一 HTML/URL 输入也会启动浏览器，自动捕获并发送一张整页截图**；在选择界面直接确认且无选区也发送整页。整页图宽高不超过 768px，不拆图，不通过无限滚动扩展页面；长页文字可能过小，需要精细视觉信息时应框选区域。浏览器不可用会报错，不能静默作为无图请求发送。无页面来源的普通文本对话保持原流程。
+
+关闭选择浏览器或取消会结束捕获，不创建新会话、不发送模型请求。浏览器使用[固定的专用 profile](#浏览器资料目录)，保留在 CLI 浏览器中登录的状态，不共享日常 Chrome 的登录态；捕获不单独导出 cookie、localStorage 或请求头。截图前后保留的 DOM、实时选区内容或区域位置变化会自动重采一次，持续变化则提示重选；已清空内容或已删除后方分支的变化若不影响选区，则不会阻止捕获；快速持续变化的页面可能无法稳定捕获。图片编码后超过 2 MiB 时提示调整区域。
+
+确认捕获、取得 sessionId 后，CLI 在发送生成请求前保存 `downloads/<sessionId>/capture/`，并打印 `Capture saved: <绝对路径>`。目录含：
+
+- `source.html`：与提交内容一致的 DOM 序列化；有选区时为精简版本。
+- `source.dom.json`：与 HTML 的 SHA-256 配对的结构快照，保留实时父子关系、属性、命名空间和 template 内容。
+- `regions.png` 或 `regions.jpg`：最终编号拼图；整页模式为 `page.png` 或 `page.jpg`；纯文本选区没有图片。
+- `capture.json`：与请求一致的 XPath、区域文本、拼图坐标和页面 URL 元数据；其中 pageUrl 是默认 preview 的来源地址。
+
+同一会话再次捕获会更新这一专用目录，并移除其中旧截图；该目录不要存放需要保留的手工文件。widget 的三个产物及运行时 data.json 不受影响。副本保存失败时不发送 prompt，后续 HTTP/模型失败时副本仍保留。新会话创建失败时还没有 sessionId，不会生成此目录。
+
+生成完成后，可以重新打开记录的在线 URL 调试提取：
+
+```bash
+npm run test-cli -- preview --out ./downloads/SESSION_ID
+```
+
+该模式复用本地预览的 CHROME_EXECUTABLE 和专用浏览器资料目录，需要 Chrome/Chromium；只有服务端真正接受并完成生成后，CLI 才按既有规则保存三个产物。
+
+## 自动保存 widget
+
+`prompt` 和 `chat` 收到本轮成功完成的三个文件后，自动保存到当前目录下的 `downloads/<sessionId>/`，并打印 `Saved widget: <绝对路径>`。目录内是 `extra.js`、`widget.html`、`meta.json`；文件职责、数据注入方式和三档尺寸见[产物协议](protocol.md#widget-文件与截图)。目录不存在时自动创建；同一会话的后续产物覆盖这三个文件，路径不变。客户端的 data.json、其他文件及原有旧轮次子目录保留。
+
+CLI 校验文件集合、UTF-8 字节数、sha256 和 metadata，先将全部文件写入临时目录，再逐个替换会话目录中的产物。缺文件、内容损坏、写入失败、失败/中止轮次或本轮完成事件缺失会报错并以非零状态退出，不会宣称保存成功。无产物的普通对话不创建目录。三个产物即使被本地修改也会覆盖；每个文件单独替换，若替换过程中发生 IO 故障，可能已更新部分文件，CLI 会报错。
+
+`events` 跟随到实时完成事件时也会保存。历史完成事件只有 metadata，没有文件内容，CLI 会提示 `historical content unavailable`；目前无法补下载断线期间已完成的文件。
+
+保存目录包含服务端生成的三个文件。本地预览会执行提取并写入 `data.json`，再通过 HTTP server 打开 `widget.html`；手动打开时也需先准备该数据文件。HTML 不内嵌数据，缺少 data.json 时显示静态错误状态，详情见[数据加载约定](protocol.md#widget-文件与截图)。
+
+## 本地预览 widget
+
+已有捕获记录和生成的产物目录时，默认在线验证；离线可重建 v2 快照或显式打开原始 HTML：
+
+```bash
+npm run test-cli -- preview --out ./downloads/SESSION_ID
+npm run test-cli -- preview --out ./downloads/SESSION_ID --snapshot
+npm run test-cli -- preview --out ./downloads/SESSION_ID --source ./source.html
+npm run test-cli -- preview --help
+```
+
+`--out` 必填，路径相对于命令的工作目录。默认从 `<out>/capture/capture.json` 读取 `pageUrl` 和 viewport，打开该 HTTP/HTTPS 地址，使用捕获时的视口尺寸及 DPR 1。旧捕获只要有这些字段即可使用；无需 capture/source.html。缺少或非法 URL、viewport 或损坏的 metadata 会报错。默认不会退回 source.html，也不用 requestUrl 或 baseUrl 代替 pageUrl。
+
+`--snapshot` 从 `<out>/capture/` 读取 capture v2 与两份配对文件，无 HTML 解析修复地重建离线 DOM，不执行源脚本或加载源资源。文件缺失、损坏或不匹配时失败，不覆盖已有 data.json，也不退回原 URL。它与 `--source` 互斥；远程图片提取仍需要在线验证。
+
+`--source <原始 HTML>` 是兼容的离线文件入口，会提示 HTML 解析可能改变实时结构：以 file URL 打开指定文件，优先于保存的 URL，不要求 capture.json。out 必须已有 `extra.js`、`widget.html`、`meta.json`；可以含有 data.json 或其他文件。该命令不调用 backend 或模型，也不需要 WEBCLIP 环境变量。
+
+CLI 启动独立的可见 Chrome/Chromium。在线或 `--source` 模式正常执行网页脚本，等待页面 load 后固定再等 **5 秒**；`--snapshot` 直接在惰性文档中提取。随后执行 extra.js 的完整内容。等待同步对象或 Promise 结果（最长 15 秒），JSON 对象通过校验后写入 out/data.json，已有数据文件被覆盖，其他文件保留。加载失败、HTTP 4xx/5xx、提取、校验或写入失败不会替换原数据。固定 5 秒不保证所有网站的异步数据都已到达，提取使用当时的 DOM；没有选择器或等待时长参数。
+
+提取结果可含选区图片的 base64 data URI，widget 直接从 data.json 显示，不再次请求原图 URL。跨域像素不可读或图片未就绪时可省略图片；服务端捕获 DOM 预览不能替代这条在线路径。renderer 已移除或隐藏的可选坏图不阻止就绪，仍可见的图片解码失败会报错。图片预算与支持边界见[产物协议](protocol.md#widget-文件与截图)。
+
+随后 CLI 启动仅监听 `127.0.0.1` 的 HTTP server，自动选择空闲端口，并在同一浏览器中打开 widget.html。页面按 meta 的参考尺寸显示，并从磁盘上的 data.json 读取数据。等 widgetReady、字体和图片完成后，终端打印 `Data saved:` 和 `Preview ready:`；只有这些步骤成功才报告就绪。渲染失败会退出并报告错误，已成功生成的 data.json 保留。
+
+终端持续运行供查看；按 Ctrl-C、发送 SIGTERM、关闭预览标签页或关闭该浏览器会结束命令，关闭 HTTP 服务和浏览器，保留专用 profile。再次提取时重新运行命令。命令不借用日常浏览器的登录态，不恢复捕获时的滚动位置或点击状态。在线列表内容可能已变化；显式 file URL 不能恢复原网站 origin 或缺失资源，精简的捕获 HTML 也不是完整网站存档。
+
+浏览器可执行文件通过 `CHROME_EXECUTABLE` 指定。未设置时，macOS 使用 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`，其他平台使用 PATH 中的 `chromium`。需要图形桌面环境；CLI 不自动下载浏览器。完整浏览器配置和测试入口见[开发指南](development.md)。
+
+
+## 浏览器资料目录
+
+`prompt --url/--file` 捕获和 `preview` 打开的可见浏览器默认共用 `~/.webclip-widget/browser-profile`（`~` 为当前用户的主目录，与命令执行目录无关）。关闭浏览器、取消或启动失败都不删除该目录；Cookie、localStorage 等可跨次复用。首次需要在 CLI 浏览器中登录，网站使凭据失效后仍需重新登录。该目录独立于日常 Chrome 的资料目录。
+
+需要其他目录时，在启动命令前设置环境变量；相对路径以命令当前目录为基准：
+
+```bash
+export WEBCLIP_BROWSER_USER_DATA_DIR="$HOME/.webclip-widget/another-profile"
+```
+
+同一个资料目录不能同时运行多个 Chrome。前一个捕获或预览浏览器尚未关闭时，先退出它，或为另一条命令指定不同目录。可在浏览器的 `chrome://version` 页面查看“个人资料路径”（通常为上述目录下的 `Default`）。
+
+要清空登录状态，先关闭使用该目录的 CLI 浏览器，再删除该资料目录；下次启动会重新创建。无头自动化检查默认使用独立临时目录，退出后删除，不读取此环境变量或交互浏览器的登录数据。

@@ -1,0 +1,149 @@
+# 开发、测试与部署
+
+以下命令在仓库根目录执行。需要满足 [package.json](../package.json) 声明的 Node 版本（≥ 22.6），以及模型网关的地址和凭据。开发服务由 Wrangler 启动。
+
+## 目录与配置归属
+
+[backend/](../backend/) 是 npm workspace，包含服务端源码、并置测试、Wrangler 配置、生成类型和后端专用脚本；依赖声明在 [backend/package.json](../backend/package.json)。根目录维护统一的 package-lock.json，安装在根目录执行。
+
+[test-cli/](../test-cli/) 是 Node workspace，依赖由自己的 [package.json](../test-cli/package.json) 拥有，共享根 lockfile。服务端命令使用 `WEBCLIP_URL`、`WEBCLIP_USER`，不读取后端模型密钥；本地 preview 命令直接控制浏览器，不需要这些变量。输入文件路径相对于启动 CLI 的当前目录。
+
+根目录的 dev、test、typecheck、types、deploy 和 verify-model-limits 命令转发到 backend，后端工具的工作目录是 backend。也可以在该目录直接执行对应 npm 命令。`npm run types` 从可提交的 `.dev.vars.example` 生成模型凭据的字段类型，避免个人配置中的额外变量进入生成文件。网页转换协议由 [protocol.md](protocol.md)维护。
+
+并行领取 Beads 任务、按当前 provider 启动 Codex、隔离 worktree／backend 和逐任务提交 PR，使用 [parallel-codex-worktrees skill](../.agents/skills/parallel-codex-worktrees/SKILL.md)。
+
+## 本地运行
+
+```bash
+npm install
+cp backend/.dev.vars.example backend/.dev.vars
+```
+
+[backend/.dev.vars.example](../backend/.dev.vars.example) 是可提交的模板；真实的 `.dev.vars` 及其环境变体被 Git 忽略。在 `backend/.dev.vars` 填入 `LLM_BASE_URL`、`LLM_API_KEY`，然后启动：
+
+```bash
+npm run dev
+```
+
+普通客户端不需要 AUTH_TOKEN；会话按 x-webclip-user 路由。客户端应持久使用同一标识，模型网关的 LLM_API_KEY 只保存在后端。客户端接入方式见[协议](protocol.md)。
+
+[wrangler.jsonc](../backend/wrangler.jsonc) 声明 DO 和 Browser Run 绑定、provider 和默认模型；模型注册表由 [model.ts](../backend/src/agent/model.ts) 维护。`MAX_CONCURRENT_TURNS` 虽已声明，目前执行路径没有读取它，不能据此认为跨会话并发受到限制。
+
+## 手动清理用户 DO
+
+[清理脚本](../backend/scripts/cleanup-empty-dos.mjs)使用仓库安装的 Wrangler 登录凭据和 `backend/wrangler.jsonc` 的 Worker。需要目标账号的 Worker/版本部署与 DO 枚举权限，workers.dev 入口需已启用。先运行 `npm ci` 安装锁定依赖，再从仓库根目录执行：
+
+```bash
+npx wrangler login --config backend/wrangler.jsonc
+node backend/scripts/cleanup-empty-dos.mjs --help
+node backend/scripts/cleanup-empty-dos.mjs                    # 预览全部空对象
+node backend/scripts/cleanup-empty-dos.mjs --apply            # 清理全部确认无会话的对象
+node backend/scripts/cleanup-empty-dos.mjs --id <DO_ID>       # 预览指定对象
+node backend/scripts/cleanup-empty-dos.mjs --id <DO_ID> --apply # 清空指定对象的所有数据
+```
+
+多个账号时增加 `--account <32位账号ID>`；`--id` 接收完整的 64 位小写十六进制 DO ID。**`--id … --apply` 会删除指定对象的所有会话、消息、文件、分析队列、KV 数据及 alarm**，会话非空或不可读都不阻止尝试删除。它不影响其它 DO 或已解绑的外部资源。普通扫描检查所有 purpose 的会话，有会话、运行中 turn、未知 schema 或读取失败时跳过；枚举明确标记无持久化数据的对象不唤醒。
+
+预览与执行都会通过 `wrangler versions upload` 上传当前工作树的后端及临时维护入口，再用 `versions deploy` 短暂切换线上版本；不是单纯的只读 Cloudflare 查询。维护入口本身不初始化业务表，普通业务请求仍使用应用逻辑。操作应安排在没有生成任务、没有其它发布的维护时段，并停止浏览待清理对象。需要恢复的原线上版本会先写入报告，结束或可捕获中断后恢复；恢复代码版本不能恢复被删除的数据。当前线上必须是单版本 100% 流量，存在待执行的 DO migration 或上传后存储绑定变化时拒绝激活。
+
+运行中若对象已处理过普通业务或 alarm 请求，维护版本会返回 busy，不在可能仍有后台工作的实例上删除，即使指定了 ID。等业务结束并停止访问后重新执行。删除成功只证明当次存储和 alarm 已清空，后续客户端访问仍可能创建新存储；Cloudflare 枚举也可能继续显示 ID，不以条目立即消失为验收条件。
+
+每次运行报告位于 `backend/.wrangler/do-cleanup/run-*/report.json`，保存目标账号／Worker／namespace、两侧版本、各对象结果及 `recoveryCommand`，不保存凭据或会话正文。failed 或 busy、部署冲突、恢复失败均以非零退出码结束；已完成的删除不回滚。SIGKILL、断电或断网可能阻止自动恢复：先核对报告的 maintenanceVersion 是否仍在线，再手动执行 recoveryCommand；不要覆盖他人后续发布。临时入口的凭据在 30 分钟后失效，但过期不代替恢复原版本。
+
+`npm run test:do-cleanup` 验证参数、枚举、目标与绑定校验、部署冲突及恢复失败；`npm test -- --run src/maintenance/cleanup-do.test.ts` 使用真实本地 DO 验证存储保护与删除；`npm run e2e:do-cleanup` 在独立 Wrangler 本地环境切换维护和普通入口，验证默认预览、批量与指定 ID 清理、SQL/KV/alarm、业务恢复及入口移除。E2E 的控制面部署使用本地重启替代，不访问生产账号或真实线上数据。
+
+## 验证
+
+| 命令 | 覆盖范围 |
+|---|---|
+| `npm run typecheck` | TypeScript 类型检查 |
+| `npm run types` | 根据 Wrangler 配置与环境模板重建 Worker 类型 |
+| `npm test` | Workers runtime 中的测试 |
+| `npm run test:agent` | 真实 pi SDK 的 prompt、UTF-8 工具及多模态网关请求 |
+| `npm run test:cli` | Node 中的 bundle 保存、本地预览参数/等待/写入/HTTP 服务及 CLI 命令入口 |
+| `npm run test:browser` | 本地 Chrome 中的提取、三档布局、溢出/动画及本地预览生命周期 |
+| `npm run test:do-cleanup` | 通用 DO 维护工具的参数、部署协调、绑定保护与恢复 |
+| `npm run verify-docs` | README、根指令和 docs 中的本地 Markdown 链接目标 |
+| `npm run verify-notes` | Agent Note 分类、格式与归档封存 |
+| `npm run verify-design-system` | 设计目录的 ID、引用、尺寸、tokens 与上下文预算 |
+| `npm run verify-model-limits` | 模型注册表与网关公布的上限 |
+| `npm run check` | 上述检查的串行聚合，任一失败即停止 |
+
+单元与模块集成测试与实现放在一起，命名为 `backend/src/**/<模块>.test.ts`。例如 [store.test.ts](../backend/src/do/store.test.ts) 测试同目录的 Store，[user-agent-do.test.ts](../backend/src/do/user-agent-do.test.ts) 测试 DO alarm 与恢复分支。Vitest 默认发现这些文件，无需维护文件清单。
+
+CLI 测试与实现并置于 `test-cli/*.test.mjs`，使用独立临时目录与随机监听端口。SDK 接入测试位于 `backend/src/agent/*.node.test.mjs`，在 Node 中直接调用真实 pi SDK 验证 resource loader 和工具 IO，不替代 Workers 平台验证。后端浏览器测试与渲染实现并置于 `backend/src/agent/*.browser.test.mjs`；CLI 浏览器流程测试位于 `test-cli/browser-tests/*.test.mjs`。二者都不进入 Workers 测试池。`test:browser` 使用 `CHROME_EXECUTABLE` 指定的浏览器；未设置时，macOS 使用 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`，其他平台使用 PATH 中的 `chromium`。缺少浏览器会失败，需安装 Chromium 或设置该变量。浏览器测试与 CLI 复用 [browser.mjs](../test-cli/browser.mjs)，每次分配独立配置目录和调试端口，结束时等待进程退出并删除配置目录。测试用无头浏览器，交互式 preview 默认打开可见浏览器。实际 CLI 的信号退出测试和继承 stderr 的辅助进程回归测试使用 POSIX 可执行适配器，因此 Windows 跳过这两项，其余浏览器流程测试不依赖此适配器。
+
+真实服务端到端检查位于 [test-cli/checks.mjs](../test-cli/checks.mjs)。[模型兼容性测试](../backend/src/agent/model.live.test.ts.skip)保留 `.skip` 后缀，不参与默认测试；其 pi 导入与 Workers 测试池的兼容限制尚未解决。
+
+`verify-model-limits` 从环境变量或 `backend/.dev.vars` 读取网关凭据；缺少凭据时输出未检查并以 0 退出。因此 `check` 成功不代表模型上限一定已核验，报告时应单独说明跳过情况。
+
+文档链接检查只检查本地文件或目录是否存在，不检查 URL 可访问性、标题锚点或行为描述。新改的命令与行为需要相应的执行证据；不能运行的部分应在交付时说明原因。
+
+### 真实服务检查
+
+设计变更另运行 `npm run e2e:design`，使用下方相同的 CLI 环境变量。它覆盖三档尺寸的密集内容取舍及数据更新、明确全量与小尺寸冲突、进度与历史、跨主题选图与无关图省略、图片更新及读取失败降级、深色/不用图的后续修改、缺少历史、自由组合与 canvas-only 失败；保留产物、截图和用量记录供目视检查。运行方式及扩展规则见 [Design System](design-system.md)。
+
+先运行本地服务或准备已部署的服务，再配置 CLI：
+
+```bash
+export WEBCLIP_URL=http://localhost:8787
+export WEBCLIP_USER=me
+npm run test-cli -- sessions
+npm run e2e
+```
+
+```bash
+npm run e2e:widgets
+```
+
+该检查使用[固定网页](../test-cli/fixtures/widget-source.html)，真实生成 small、middle、large 以及两种未指定尺寸的 widget。要求最终 Browser Run 预览成功、metadata 符合预期并保存三个文件到 `downloads/`；会清理测试会话。它需要模型凭据和可用的 Browser Run，产生模型费用，不属于默认 `check`。如果改变 backend 源码触发 Wrangler 重载，正在运行的模型检查会断线，需要待服务就绪后重新运行；断线结果不算通过。
+
+`sessions` 用于确认认证和路由；新服务的列表为空是正常结果。`e2e` 会创建测试会话、调用真实模型并清理会话，产生模型费用。测试检查认证、SSE 续传、幂等、上传和产物交付；其实现位于 [test-cli/checks.mjs](../test-cli/checks.mjs)。
+
+```bash
+WEBCLIP_SLOW=1 npm run e2e
+```
+
+慢检查用于验证客户端消失后的 turn 存活，默认跳过。它要求实际 turn 超过 70 秒；不足时会重试一次，仍不足则失败。等待期间不能向同一个 DO 轮询，否则轮询本身会保活，掩盖问题。本地 workerd 不能证明线上驱逐行为，保活验证需要部署环境。测试层次及覆盖缺口见[测试策略](../.agents/notes/implemented/testing/2026-09-28-test-strategy.md)。
+
+## 浏览器启动排查
+
+本地 `preview_widget` 依赖 Wrangler 下载的 Chrome for Testing。下载解压被中断时，缓存可能只有启动器而缺少 Frameworks，启动会报 `spawn Unknown system error -88`。可以先检查缓存是否完整：
+
+```bash
+find ~/Library/Caches/.wrangler/chrome -type f | wc -l
+```
+
+本项目曾观察到完整缓存有两千余文件，而残缺缓存只有个位数；数量仅用于判断是否明显残缺。确认损坏后删除该浏览器缓存，再启动 `npm run dev` 重新下载，等待解压完成：
+
+```bash
+rm -rf ~/Library/Caches/.wrangler/chrome
+```
+
+工具将浏览器启动失败返回给模型，一次预览失败不直接终止整轮。Chromium 预览不等于其他宿主验证；运行环境差异见[架构与限制](architecture.md)。
+
+## 部署
+
+在具备目标 Cloudflare 账户权限的环境执行：
+
+```bash
+npx wrangler secret put --config backend/wrangler.jsonc LLM_API_KEY
+npx wrangler secret put --config backend/wrangler.jsonc LLM_BASE_URL
+npm run deploy
+```
+
+不要把这些 secret 以空值声明在 `backend/wrangler.jsonc` 的 `vars` 中，空值会覆盖 secret。部署后将 `WEBCLIP_URL` 指向返回的服务地址，再运行上述端到端检查。
+
+UUID 仅用于路由，调用者可声明任意 `x-webclip-user`；账号和可信用户身份验证不在当前接口中。
+
+### 框选与图片理解验证
+
+```bash
+npm run e2e:capture
+```
+
+需要已运行的 backend 和 WEBCLIP_URL。该检查启动本地测试网页，分别通过真实框选拼图和无选区整页流程发送请求，调用真实模型并生成 widget。校验码仅画在 canvas 像素上，不出现在提交的 HTML/文本中；必须由模型识别校验码且最终 widget 预览通过。该检查有模型费用，产物留在 downloads，测试会话与临时捕获文件会清理。
+
+新增 capture PNG/JPEG 验证在 Workers 中实际解码，依赖由 backend 的 package.json 拥有。输入与图片引用存储、旧格式恢复及接受请求的副作用顺序由 Workers 测试覆盖；框选、清空、取消、尺寸缩放和图片/DOM 对应由真实浏览器测试覆盖。
+
+`npm run e2e:dom` 使用 WEBCLIP_URL，验证真实捕获 v2、上传、模型生成、服务端预览、debug 留存与本地快照重放。受控页面通过 DOM API 创建无 tbody 的表格和嵌套链接卡片；同一生成脚本的实时与离线数据必须一致，证据保存在 downloads/dom-structure-check-*。

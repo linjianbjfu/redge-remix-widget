@@ -1,0 +1,39 @@
+{
+  "name": "webclip-widget",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "verify-docs": "node scripts/verify-doc-links.ts",
+    "verify-agent-note-classification": "node scripts/verify-agent-note-classification.ts",
+    "verify-agent-note-format": "node scripts/verify-agent-note-format.ts",
+    "verify-archived-agent-notes": "node scripts/verify-archived-agent-notes.ts",
+    "verify-notes": "npm run verify-agent-note-classification && npm run verify-agent-note-format && npm run verify-archived-agent-notes",
+    "typecheck": "npm run typecheck --workspace @webclip/backend --",
+    "test": "npm run test --workspace @webclip/backend --",
+    "test:watch": "npm run test:watch --workspace @webclip/backend --",
+    "dev": "npm run dev --workspace @webclip/backend --",
+    "deploy": "npm run deploy --workspace @webclip/backend --",
+    "check": "npm run check --workspace @webclip/backend && npm run test:do-cleanup && npm run test:cli && npm run test:agent && npm run test:browser && npm run verify-notes && npm run verify-docs",
+    "types": "npm run types --workspace @webclip/backend --",
+    "e2e": "node test-cli/index.mjs check",
+    "test-cli": "node test-cli/index.mjs",
+    "verify-model-limits": "npm run verify-model-limits --workspace @webclip/backend --",
+    "verify-design-system": "npm run verify-design-system --workspace @webclip/backend --",
+    "test:cli": "node --test test-cli/*.test.mjs",
+    "test:browser": "node --test backend/src/agent/*.browser.test.mjs test-cli/browser-tests/*.test.mjs",
+    "e2e:widgets": "node test-cli/widget-checks.mjs",
+    "e2e:design": "node test-cli/design-checks.mjs",
+    "test:agent": "node --test backend/src/agent/*.node.test.mjs",
+    "e2e:capture": "node test-cli/capture-checks.mjs",
+    "e2e:dom": "node test-cli/dom-structure-checks.mjs",
+    "test:do-cleanup": "node --test backend/scripts/cleanup-empty-dos.node.test.mjs",
+    "e2e:do-cleanup": "node test-cli/do-cleanup-e2e.mjs"
+  },
+  "workspaces": [
+    "backend",
+    "test-cli"
+  ]
+}

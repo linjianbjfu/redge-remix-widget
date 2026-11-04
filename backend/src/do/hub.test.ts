@@ -1,0 +1,169 @@
+import { describe, expect, it } from "vitest";
+
+import { Hub } from "./hub.ts";
+import { streamEndFrame } from "./sse.ts";
+
+const decoder = new TextDecoder();
+
+/** Drain a stream to text, with a bound so a hung stream fails rather than hangs. */
+async function drain(stream: ReadableStream<Uint8Array>, limitMs = 2000): Promise<string> {
+  const reader = stream.getReader();
+  let out = "";
+  const deadline = Date.now() + limitMs;
+  for (;;) {
+    if (Date.now() > deadline) throw new Error("stream did not close");
+    const { done, value } = await reader.read();
+    if (done) return out;
+    out += decoder.decode(value);
+  }
+}
+
+function parse(text: string): Array<{ id?: string; event?: string; data?: string }> {
+  return text
+    .split("\n\n")
+    .filter(block => block.trim().length > 0)
+    .map(block => {
+      const frame: { id?: string; event?: string; data?: string } = {};
+      for (const line of block.split("\n")) {
+        if (line.startsWith("id: ")) frame.id = line.slice(4);
+        else if (line.startsWith("event: ")) frame.event = line.slice(7);
+        else if (line.startsWith("data: ")) frame.data = line.slice(6);
+      }
+      return frame;
+    });
+}
+
+describe("hub", () => {
+  it("delivers the backlog before any live frame", async () => {
+    const hub = new Hub();
+    const stream = hub.subscribe("s1", [
+      { event: "entry", data: { n: 1 }, seq: 1 },
+      { event: "entry", data: { n: 2 }, seq: 2 },
+    ]);
+    hub.broadcast("s1", { event: "entry", data: { n: 3 }, seq: 3 });
+    hub.closeAll("s1", streamEndFrame(false));
+
+    const frames = parse(await drain(stream));
+    expect(frames.map(f => f.id)).toEqual(["1", "2", "3", undefined]);
+    expect(frames.at(-1)?.event).toBe("stream_end");
+  });
+
+  it("feeds two subscribers the same live frames", async () => {
+    const hub = new Hub();
+    const a = hub.subscribe("s1", []);
+    const b = hub.subscribe("s1", [{ event: "entry", data: { old: true }, seq: 1 }]);
+    expect(hub.count("s1")).toBe(2);
+    hub.broadcast("s1", { event: "entry", data: { live: true }, seq: 2 });
+    hub.closeAll("s1", streamEndFrame(false));
+
+    const [fa, fb] = [parse(await drain(a)), parse(await drain(b))];
+    // A joined with no backlog, B with one record; both see the live frame.
+    expect(fa.map(f => f.id)).toEqual(["2", undefined]);
+    expect(fb.map(f => f.id)).toEqual(["1", "2", undefined]);
+  });
+
+  it("drops a subscriber that stops reading and keeps the rest running", async () => {
+    const hub = new Hub();
+    const stalled = hub.subscribe("s1", []);
+    const healthy = hub.subscribe("s1", []);
+    // Consume `healthy` concurrently; never read `stalled`, so its writes
+    // queue until the cap trips and it is dropped.
+    const collected = drain(healthy, 5000);
+    // Yield for real between batches so the live reader keeps up; the
+    // unread one accumulates until its cap trips.
+    for (let batch = 0; batch < 10; batch++) {
+      for (let i = 0; i < 20; i++) {
+        hub.broadcast("s1", { event: "entry", data: { i }, seq: batch * 20 + i + 1 });
+      }
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    expect(hub.count("s1")).toBe(1);
+    hub.closeAll("s1", streamEndFrame(false));
+    const frames = parse(await collected);
+    expect(frames.at(-1)?.event).toBe("stream_end");
+    void stalled;
+  });
+
+  it("closes a finite stream without a live tail", async () => {
+    const hub = new Hub();
+    const stream = hub.finite([{ event: "entry", data: { n: 1 }, seq: 1 }], streamEndFrame(false));
+    // Not registered, so a later broadcast cannot reach it.
+    hub.broadcast("s1", { event: "entry", data: { n: 2 }, seq: 2 });
+    const frames = parse(await drain(stream));
+    expect(frames.map(f => f.event)).toEqual(["entry", "stream_end"]);
+  });
+
+  it("reports busy state on the terminator", async () => {
+    const hub = new Hub();
+    const stream = hub.finite([], streamEndFrame(true));
+    const frames = parse(await drain(stream));
+    expect(JSON.parse(frames[0]!.data!)).toEqual({ sessionBusy: true });
+  });
+});
+
+/** Instance-owned scheduler: unrelated Worker tests never share a fake global clock. */
+class Heartbeats {
+  readonly ticks = new Set<() => void>();
+  readonly intervals: number[] = [];
+  schedule = (tick: () => void, milliseconds: number) => {
+    this.intervals.push(milliseconds);
+    this.ticks.add(tick);
+    return () => { this.ticks.delete(tick); };
+  };
+  tick() { for (const tick of [...this.ticks]) tick(); }
+}
+
+describe("SSE heartbeat lifecycle", () => {
+  it("sends comments without IDs and stops at stream_end", async () => {
+    const clock = new Heartbeats();
+    const hub = new Hub(clock.schedule);
+    const reader = hub.subscribe("s", []).getReader();
+    try {
+      expect(clock.intervals).toEqual([15_000]);
+      const read = reader.read();
+      clock.tick();
+      expect(decoder.decode((await read).value)).toBe(": keepalive\n\n");
+      hub.closeAll("s", streamEndFrame(false));
+      expect(clock.ticks.size).toBe(0);
+      expect(hub.count("s")).toBe(0);
+      expect(decoder.decode((await reader.read()).value)).toContain("event: stream_end");
+      expect((await reader.read()).done).toBe(true);
+    } finally { await reader.cancel(); }
+  });
+
+  it("releases a cancelled idle reader without waiting for another broadcast", async () => {
+    const clock = new Heartbeats();
+    const hub = new Hub(clock.schedule);
+    const a = hub.subscribe("s", []).getReader();
+    const b = hub.subscribe("s", []).getReader();
+    await a.cancel(new Error("peer disconnected"));
+    expect(hub.count("s")).toBe(1);
+    expect(clock.ticks.size).toBe(1);
+    const read = b.read();
+    clock.tick();
+    expect(decoder.decode((await read).value)).toBe(": keepalive\n\n");
+    await b.cancel();
+    expect(hub.count("s")).toBe(0);
+    expect(clock.ticks.size).toBe(0);
+  });
+
+  it("bounds heartbeat backlog and releases blocked writes", async () => {
+    const clock = new Heartbeats();
+    const hub = new Hub(clock.schedule);
+    const reader = hub.subscribe("s", []).getReader();
+    // Observe the rejection before advancing time so there is no unhandled reader promise.
+    const closed = reader.closed.catch(error => error);
+    for (let i = 0; i < 65; i++) clock.tick();
+    expect(hub.count("s")).toBe(0);
+    expect(clock.ticks.size).toBe(0);
+    expect(await closed).toBeInstanceOf(Error);
+    await reader.cancel().catch(() => {});
+  });
+
+  it("never schedules heartbeat for finite replay", async () => {
+    const clock = new Heartbeats();
+    const hub = new Hub(clock.schedule);
+    expect(await drain(hub.finite([], streamEndFrame(false)))).not.toContain("keepalive");
+    expect(clock.intervals).toEqual([]);
+  });
+});

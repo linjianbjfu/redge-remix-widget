@@ -1,0 +1,25 @@
+node_modules/
+.DS_Store
+.wrangler/
+dist/
+.dev.vars
+.dev.vars.*
+!/backend/.dev.vars.example
+.env
+.env.*
+
+/downloads/
+
+# Beads / Dolt files (added by bd init)
+.beads/
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
+
+# Local agent configuration and hooks.
+.codex/
+
+# Local UI acceptance captures and isolated server state.
+/.playwright-mcp/
