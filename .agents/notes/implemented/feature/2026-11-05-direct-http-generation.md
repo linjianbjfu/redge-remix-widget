@@ -49,6 +49,7 @@ Status: implemented
 - 分别注入 19 个分桶、转发额外 headers、预览服从旧 metadata、跳过 GEC gating、PNG 回退 JPEG 五个错误，相关门禁均按预期失败，恢复后通过。端口与临时目录由各测试独立分配，子进程和浏览器在 teardown 等待退出。
 - 独立本地 Worker 使用真实模型和 Browser Run，从实际 CLI 入口提交一次 JSON 请求，返回 Success、fixed、360×440；本地 Chrome 再渲染正确显示故障数 0 与运行设备 12。证据为 `.playwright-mcp/direct-http-live-LnJQ2F/` 的 result.json、widget.png 与产物。临时 Worker、浏览器和持久化目录已清理。
 - 线上服务为 [redge-remix-widget](https://redge-remix-widget.linjsd.workers.dev)，版本 `06dbd7c9-d00e-4362-8ede-a178a3c53a73`，使用独立 DO 命名空间与 Browser Run 绑定。LLM_BASE_URL/LLM_API_KEY 作为该 Worker 的 secrets 同版本上传，仅有这两个 secret，临时密钥文件已删除。公网 GET 入口返回 405/Allow POST/禁止缓存；实际 CLI 的真实模型请求在 76614ms 返回 Success、fixed、360×440，必需文本通过客户端校验。线上产物与结果保存在 `.playwright-mcp/cloudflare-deploy-P6OFhk/`。旧 Worker 与用户本地 server 保持运行。
+- 当前发布版本为 `d212021b-0741-45c4-9442-51f4130ae08f`，对应源码提交 `cc742013e1e8bcbed46cbcf8cd948be38954b982`，100% 流量，模型为 mai-code-2-flash，预览预算为1。当前本地 cnc.buildnow.work/v1 的模型配置作为 secrets 同版本同步，临时密钥文件已删除。270项本地门禁通过；公网真实生成返回 Success、fixed、360×440，必需文本通过校验。本地严格版式复验中，样例 running-value 的数字12出现 clientHeight46/scrollHeight49 的溢出提示，未将该复验称为通过，也未改变用户预算；证据保留在 `.playwright-mcp/current-release/`。旧版本的部署和验收记录仅作为历史证据。
 - Wrangler deploy dry-run 编译成功。旧网关缺少模型上限的核验失败记录保留在 `webclip_widget-bzo`，未通过跳过门禁处理；当前本地三模型定义及核验结果由[Luna 注册](../bug-fix/2026-11-06-luna-model-registration.md)维护，线上版本不自动随本地配置更新。
 
 静态首轮 system 与工具 schema 按 o200k_base 的代理计数从 5228 变为 5150 tokens：system 为 3801→3736，工具为 1427→1414。该测量不包含动态用户输入、图片和后续工具结果，不代表真实请求的总成本。

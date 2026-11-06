@@ -24,7 +24,7 @@ provider 中的 GPT 定义为 gpt-6.1-sol、gpt-6-luna、gpt-5.6-luna，保持�
 
 [真实 SDK 回归](../../../../backend/src/agent/model.node.test.mjs)覆盖已注册模型的查找、各自上下文与输出上限、推理和图片配置、实际会话与工具构造、默认值选择、缺少凭据及未知 ID。修改前两个 Luna 的注册断言失败；当前 `npm run test:agent` 的 15 项通过，`npm run verify-model-limits` 确认四项与当前网关匹配；类型、文档、Notes 和 diff 检查通过。
 
-当前本地网关为 cnc.buildnow.work/v1，三个模型的最小文本请求均已返回 HTTP 200。完整客户端生成、图片和复杂工具组合未在本次自动调用真实模型，由用户继续验收。本次只修改本地注册及相关类型/说明，没有修改 key、默认模型或云端部署。
+当前本地网关为 cnc.buildnow.work/v1，三个 GPT 模型的最小文本请求均已返回 HTTP 200。完整客户端生成、图片和复杂工具组合不由注册测试替代；线上发布记录由[直接 HTTP 生成](../feature/2026-11-05-direct-http-generation.md)维护，默认模型仍由部署配置选择。
 
 ## 后果
 
