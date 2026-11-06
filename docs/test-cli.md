@@ -1,5 +1,55 @@
 # CLI 使用
 
+## 单次 HTTP 生成
+
+直接入口只需 `WEBCLIP_URL` 和 GEC provider，不需要 WEBCLIP_USER。从[请求样例](../test-cli/fixtures/generate-request.json)开始：
+
+测试线上服务时，将 WEBCLIP_URL 设置为 `https://redge-remix-widget.linjsd.workers.dev`；路径 `/v1/generate` 由 CLI 自动追加。
+
+```bash
+export WEBCLIP_URL=http://localhost:8787
+export WEBCLIP_GEC_PROVIDER=/absolute/path/gec-provider
+npm run test-cli -- generate --json ./test-cli/fixtures/generate-request.json --out ./downloads/direct
+```
+
+provider 是可执行程序，每次尝试独立运行、不经过 shell；stdout 输出 JSON 对象，包含 Sec-MS-GEC 与 Sec-MS-GEC-Version。只复制这两个字段，额外的 Authorization、Cookie 或其他字段被忽略。token 为空白，或版本不以 `1-` 开头且后面有内容时不发生成请求。命令执行失败或输出不是 JSON 时报告 provider 错误，不打印其输出。CLI 不实现 GEC 算法。
+
+后端明确不验证 GEC，本地测试可以临时使用环境变量作为 provider；每次尝试重新读取：
+
+```bash
+export WEBCLIP_GEC=local-test-token
+export WEBCLIP_GEC_VERSION=1-local
+unset WEBCLIP_GEC_PROVIDER
+npm run test-cli -- generate --json ./test-cli/fixtures/generate-request.json --out ./downloads/direct
+```
+
+也可以复用现有可见浏览器捕获和选区：
+
+```bash
+npm run test-cli -- generate "展示选中的结果" --url "https://example.test/results?q=sample#section" --select --out ./downloads/direct
+npm run test-cli -- generate "展示结果" --file ./snapshot.html --source-url "https://example.test/results?q=sample#section" --out ./downloads/direct
+npm run test-cli -- generate --help
+```
+
+捕获取得页面标题，可用 `--title` 覆盖；URL 模式采用捕获时实际地址，文件模式的 `--source-url` 仅说明来源、不重新抓取该地址。发送处理后的 source.html、可选 PNG 与空 history；图片超限时失败，不回退 JPEG。取消捕获不发送请求。源站浏览使用专用 profile 的登录态；生成 HTTP 请求始终 credentials omit、cache no-store，不携带 OAuth 或 Cookie。
+
+生成过程的自动浏览器检查默认最多两次，由 backend 的 [PREVIEW_MAX_COUNT](development.md#本地运行)配置。设为 0 不进行这些检查；CLI 的网页捕获和手动 `preview` 仍可运行。
+
+默认每次尝试等待 600000 毫秒，`--timeout-ms` 可调整；Node 连接池也使用该等待上限。默认不重试。`--retries 1` 可对网络错误、429 或 5xx 再试一次，每次都重新调用 provider；其他 4xx、错误 JSON 或无效成功响应不重试。这里没有幂等机制，重试可能再次消耗模型额度。
+
+HTTP 发出后使用单调时钟计时，完整响应读取与校验结束时打印 `Request elapsed: 45.815s`。时间覆盖首次发送到最终结束，显式重试会累计并显示尝试次数；成功或失败均打印。网页捕获、首次 GEC 准备和文件保存不计入，未实际发送请求时不打印耗时。
+
+成功后保存 `extra.js`、`widget.html`、`meta.json` 与规范化的 `response.json` 到 --out；省略时使用 `downloads/direct-<随机ID>/`。meta.json 使用 fixed 供 360×440 预览，response.json 保留客户端规则下的响应字段。CLI 按[响应协议](protocol.md#单次-http-生成)检查必需文本，对可选字段使用空字符串/0 降级，不验证 size 枚举或尺寸范围。替换单个文件，失败可能留下部分已更新文件，但不会打印 Saved widget。其他运行时文件保留。
+
+浏览器捕获模式还保存完整 capture v2 配对文件；JSON 模式保存原始 HTML 和默认 1280×900 在线预览视口。两者都可按捕获 URL 在线预览；离线可显式使用 HTML，只有 v2 捕获支持 --snapshot：
+
+```bash
+npm run test-cli -- preview --out ./downloads/direct
+npm run test-cli -- preview --out ./downloads/direct --source ./downloads/direct/capture/source.html
+```
+
+## 会话命令
+
 CLI 用于驱动服务端、执行端到端检查及本地预览 widget。[本地预览](#本地预览-widget)不需要服务端或凭据；其余服务端命令先完成[本地运行](development.md)，配置 `WEBCLIP_URL` 和 `WEBCLIP_USER`。URL 必填，用户标识默认是 `cli`。以下命令在仓库根目录执行；`<session>` 替换为创建会话返回的 ID。
 
 ```bash

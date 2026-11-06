@@ -9,13 +9,15 @@
 | [core.ts](../backend/src/design-system/core.ts) | 常驻内容取舍、用户偏好、图形与图像优先及 canvas 支持边界 |
 | [tokens.ts](../backend/src/design-system/tokens.ts) | 明暗语义颜色、字体、间距、线宽、圆角和各尺寸建议值 |
 | [components](../backend/src/design-system/components/index.ts) | 信息组、主信息、信息行、状态、进度、趋势图、图片和分隔线的语义规范 |
-| [patterns](../backend/src/design-system/patterns/index.ts) | 布局用途、数据前提、组件引用和三档构图建议 |
+| [patterns](../backend/src/design-system/patterns/index.ts) | 布局用途、数据前提、组件引用、会话三档与 fixed 构图建议 |
 | [examples](../backend/src/design-system/examples/index.ts) | 参考图的短构图分析 |
 | [images.ts](../backend/src/design-system/images.ts) | 图片使用政策、预算及提供给模型的异步提取代码 |
 | [review.ts](../backend/src/design-system/review.ts) | 模型检查真实渲染截图时的视觉问题 |
 | [catalog.ts](../backend/src/design-system/catalog.ts) | 稳定索引、工具参数、上下文组合及目录校验 |
 
 这些文件静态打包进 Worker。组件是生成 HTML 的规范，不是宿主 API 或运行时组件库；token 是可适配的默认设计值，明确的用户风格优先。三文件交付、真实数据及静态截图要求始终适用。已有下载 HTML 自包含，不会随目录更新自动改变。
+
+单次 HTTP 入口只向模型提供 `size: fixed` 的设计参数，画布为 360×440，按竖向空间安排主次、图片与信息组；用户要求其他尺寸也不会改变画布。会话入口继续使用 small/middle/large。共享 metadata 解析器和浏览器预览识别四个名称，以便 CLI 预览两类产物。
 
 ## 白底、分区与图片层次
 

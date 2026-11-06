@@ -1,9 +1,9 @@
 /**
- * One Durable Object per user, holding every session that user owns.
+ * Session storage for a user, or one of the twenty direct-generation pool objects.
  *
- * Addressed by `idFromName(userId)`, so all of a user's requests reach the
- * same instance and can share the subscriber hub and the live pi sessions in
- * its memory. Nothing in memory is durable: the object is evicted routinely
+ * The router chooses user identity for sessions and a time bucket for direct
+ * generation. Direct requests isolate and clean their temporary workspaces.
+ * Nothing in memory is durable: the object is evicted routinely
  * and rebuilt from SQLite.
  */
 
@@ -16,6 +16,7 @@ import { Store } from "./store.ts";
 import { decideAlarm, KEEPALIVE_MS, STALE_MS, TURN_RETENTION_MS } from "./turns.ts";
 import { initializeSchema } from "../fs/schema.ts";
 import { WorkspaceFs } from "../fs/workspace-fs.ts";
+import {GENERATION_PATH, NO_CACHE_HEADERS, type GenerationRequest, type GenerationResult} from "../generation.ts";
 
 export type Env = Cloudflare.Env;
 
@@ -53,7 +54,32 @@ export class UserAgentDO extends DurableObject<Env> {
   }
 
   override async fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname === GENERATION_PATH) return this.#generate(request);
     return handle(request, this.#deps());
+  }
+
+  generationRunner = async (input: GenerationRequest, fs: WorkspaceFs, sessionId: string): Promise<GenerationResult> => {
+    const {generateWidget} = await import("../agent/generate.ts");
+    return generateWidget(this.env, fs, sessionId, input);
+  };
+
+  async #generate(request: Request): Promise<Response> {
+    if (request.method !== "POST") return Response.json({status: "Error", error: "method_not_allowed"},
+      {status: 405, headers: {...NO_CACHE_HEADERS, allow: "POST"}});
+    let input: GenerationRequest;
+    try { input = await request.json<GenerationRequest>(); }
+    catch { return Response.json({status: "Error", error: "invalid_json"}, {status: 400, headers: NO_CACHE_HEADERS}); }
+    const sessionId = crypto.randomUUID();
+    this.#store.createSession(sessionId);
+    try {
+      const result = await this.generationRunner(input, this.workspace(sessionId), sessionId);
+      return Response.json(result, {headers: NO_CACHE_HEADERS});
+    } catch {
+      return Response.json({status: "Error", error: "generation_failed"}, {status: 500, headers: NO_CACHE_HEADERS});
+    } finally {
+      this.#store.deleteSession(sessionId);
+      this.#workspaces.delete(sessionId);
+    }
   }
 
   #deps(): HandlerDeps {

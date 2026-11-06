@@ -12,7 +12,7 @@ widget 页面用于静态截图，需要有明确的尺寸、稳定的可见内�
 
 ### 产物与尺寸
 
-交付 `extra.js`、`widget.html`、`meta.json`。metadata 只有 `size: small | middle | large`。HTML 自适应宿主 viewport，服务端用 small 160×160、middle 344×160、large 344×360 CSS px 作为预览基准，不把某一机型的尺寸写死进产物。
+会话生成交付 `extra.js`、`widget.html`、`meta.json`，使用 `size: small | middle | large`。HTML 自适应宿主 viewport，服务端用 small 160×160、middle 344×160、large 344×360 CSS px 作为预览基准，不把某一机型的尺寸写死进产物。[单次 HTTP 生成](../../implemented/feature/2026-11-05-direct-http-generation.md)扩展共享解析器与预览的 fixed 360×440 档位，使用独立返回 envelope；本记录继续拥有内部三文件、客户端数据流与会话尺寸选择。
 
 用户显式尺寸优先；首次未指定时，模型选择能清楚呈现内容的最小档位，后续保留已有尺寸，除非用户或内容需求改变。默认设计值与布局指引由 [Design System](../../../../docs/design-system.md) 拥有，用户明确风格优先，不固定套用装饰模板。禁止 CSS/JS/SVG 动画、过渡、动图、视频和依赖交互、滚动、定时刷新的内容。详细接口由[产物协议](../../../../docs/protocol.md#widget-文件与截图)拥有。
 
@@ -25,6 +25,8 @@ widget 页面用于静态截图，需要有明确的尺寸、稳定的可见内�
 pi 从已经 reload 的 resource loader 读取 brief。`createAgentSession` 顶层不支持 systemPrompt，因此不能在整个配置对象上用类型断言隐藏字段错误；必要的 SDK 泛型兼容断言只位于工具列表。read/edit 适配器返回 Buffer，因为 SDK 调用 `toString("utf-8")` 或 `toString("base64")`，普通 Uint8Array 会变成十进制字节列表。
 
 `preview_widget` 先校验三文件及 metadata，再在独立浏览器 context 中提取、渲染、截图。捕获 HTML 用 DOMParser 解析，源脚本不运行。数据 HTTP 加载、就绪信号与渲染一致性检查由[运行时数据决策](2026-10-01-widget-runtime-data-json.md)拥有；根边界、溢出及动画检查继续执行。完整提取 JSON 写到交付目录之外供模型检查字段。
+
+[预览次数预算](../../implemented/feature/2026-11-06-preview-max-count.md)限制自动工具的执行尝试，默认2，0不注册。每次实际检查仍使用本记录的校验流程，有限次数不等于所有修订均经过浏览器验证。
 
 SDK 用抛出的异常标记工具执行失败，不读取返回对象上的 isError 属性。预览无法执行时抛出简短错误；已执行的质量检查保留截图，并以 `details.valid` 与文本报告结论。真实模型检查读取该结论，不能把 tool_end 的 ok 当作产物合格。
 

@@ -33,6 +33,7 @@ import { createDesignContextTool } from "./design-context.ts";
 import { createWorkspaceOperations } from "./operations.ts";
 import { WORKSPACE_ROOT, OUT_DIR, createShell } from "../shell/bash.ts";
 import type { WorkspaceFs } from "../fs/workspace-fs.ts";
+import {resolvePreviewMaxCount} from "./preview-policy.ts";
 
 export interface OpenSessionInput {
   modelRuntime: ModelRuntime;
@@ -44,6 +45,10 @@ export interface OpenSessionInput {
   history: readonly unknown[];
   /** Browser Run binding. Without it `preview_widget` is not offered at all. */
   browser?: BrowserRun;
+  /** Single-request generation always uses the 360×440 canvas. */
+  fixedCanvas?: boolean;
+  /** Maximum preview attempts in this run; 0 disables the tool. Defaults to 2. */
+  previewMaxCount?: number;
 }
 
 export interface OpenedSession {
@@ -69,6 +74,9 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
 
   const model = input.modelRuntime.getModel(input.providerId, input.modelId);
   if (!model) throw new Error(`model ${input.providerId}/${input.modelId} is not registered`);
+  const previewMaxCount = resolvePreviewMaxCount(input.previewMaxCount);
+  const effectivePreviewMaxCount = input.browser ? previewMaxCount : 0;
+  let opened: Awaited<ReturnType<typeof openCoreSession>> | undefined;
 
   // The `*Operations` seam is reached through each tool's definition factory,
   // and those definitions are registered as `customTools`. A same-named custom
@@ -77,10 +85,16 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
   // `createAgentSession` directly does nothing: the built-ins stay in place and
   // reach for the local filesystem and `child_process.spawn`.
   const customTools = [
-    createDesignContextTool(),
+    createDesignContextTool(undefined, input.fixedCanvas),
     // Offered only when the binding exists: a tool the model can call but
     // that always fails is worse than one it never sees.
-    ...(input.browser ? [createPreviewTool(input.browser, input.fs)] : []),
+    ...(input.browser && effectivePreviewMaxCount > 0 ? [createPreviewTool(input.browser, input.fs, input.fixedCanvas, {
+      maxCount: effectivePreviewMaxCount,
+      onExhausted: () => {
+        const session = opened?.session;
+        if (session) session.setActiveToolsByName(session.getActiveToolNames().filter(name => name !== "preview_widget"));
+      },
+    })] : []),
     withWorkspaceShellBrief(
       createBashToolDefinition(WORKSPACE_ROOT, { operations: operations.bash }),
     ),
@@ -91,7 +105,7 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
     createFindToolDefinition(WORKSPACE_ROOT, { operations: operations.find }),
   ];
 
-  return openCoreSession({
+  opened = await openCoreSession({
     cwd: WORKSPACE_ROOT,
     model,
     modelRuntime: input.modelRuntime,
@@ -99,8 +113,11 @@ export async function openSession(input: OpenSessionInput): Promise<OpenedSessio
       sessionId: input.sessionId,
       workspaceRoot: WORKSPACE_ROOT,
       outDir: OUT_DIR,
+      ...(input.fixedCanvas ? {fixedCanvas: true} : {}),
+      previewMaxCount: effectivePreviewMaxCount,
     }),
     // SDK renderer generics are contravariant; keep this cast local to the tool list.
     customTools: customTools as NonNullable<CreateAgentSessionOptions["customTools"]>,
   }, input.history);
+  return opened;
 }

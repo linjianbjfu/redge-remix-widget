@@ -19,6 +19,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { createModelRuntime, resolveProvider } from "./model.ts";
 import { openSession } from "./session-factory.ts";
+import {resolvePreviewMaxCount} from "./preview-policy.ts";
 import type { Env } from "../do/user-agent-do.ts";
 import type { Hub } from "../do/hub.ts";
 import { kindToEvent, streamEndFrame, type Frame } from "../do/sse.ts";
@@ -90,6 +91,7 @@ export async function runTurn(input: RunTurnInput): Promise<void> {
         .piEntries(sessionId, turn.recoveries > 0 ? turnId : undefined)
         .map(row => row.entry),
       ...(env.BROWSER ? { browser: env.BROWSER } : {}),
+      previewMaxCount: resolvePreviewMaxCount(env.PREVIEW_MAX_COUNT),
     });
 
     let persisted = opened.persistedEntries;

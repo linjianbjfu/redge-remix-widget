@@ -5,9 +5,9 @@ import { parseCapture } from '../backend/src/capture.ts';
 import { artifactDirectory } from './artifacts.mjs';
 
 /** Replace the dedicated capture directory; preserve the previous snapshot on ordinary failure. */
-export async function saveCaptureDebug({ sessionId, captured, root }) {
+export async function saveCaptureDebug({ sessionId, captured, root, directory }) {
   const capture = parseCapture(captured.capture);
-  const parent = artifactDirectory(sessionId, root);
+  const parent = directory ?? artifactDirectory(sessionId, root);
   const target = join(parent, 'capture');
   await mkdir(parent, { recursive: true });
   const lock = join(parent, '.capture.lock');

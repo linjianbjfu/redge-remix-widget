@@ -8,9 +8,9 @@ Status: implemented
 
 ## 决策
 
-工程提供网页捕获、区域选择、结构快照、多模态输入、服务端生成与预览，以及 test CLI 下载和本地预览。交付仍是 `widget.html`、`extra.js`、`meta.json`；提取脚本名称是 `extra.js`。网页 brief、模型注册表和会话工厂与本次删除前的备份逐字节一致。
+工程提供网页捕获、区域选择、结构快照、多模态输入、服务端生成与预览，以及 test CLI 下载和本地预览。交付仍是 `widget.html`、`extra.js`、`meta.json`；提取脚本名称是 `extra.js`。保留网页生成器、模型配置和会话工具构造；[Luna 模型注册](../bug-fix/2026-11-06-luna-model-registration.md)维护当前三个模型的定义与上限。
 
-删除完整 `ios/`、后端原生生成模块与产品 skills、原生 SDK 派生工具、Widget 广场、Admin、App 与原生 Token 统计，以及各自的测试、E2E、文档和配置。共享 DO 只执行网页 runner，不创建原生、同步或统计专用表；Worker 只转发 `/v1/sessions` 及其子路径，其他入口返回 404 且不唤醒 DO。
+删除完整 `ios/`、后端原生生成模块与产品 skills、原生 SDK 派生工具、Widget 广场、Admin、App 与原生 Token 统计，以及各自的测试、E2E、文档和配置。共享 DO 只执行网页生成，不创建原生、同步或统计专用表；Worker 支持会话 `/v1/sessions` 及其子路径，以及[单次 HTTP 生成](../../implemented/feature/2026-11-05-direct-http-generation.md)的 `/v1/generate`。其他入口返回 404 且不唤醒 DO。
 
 保留网页 agent、设计系统、提取与渲染、工作区、shell、Store/Hub/SSE 和 alarm。共享构造无需复制到新项目，也不需要为删除原生功能重写网页生成器。通用手动 DO 维护工具仍可使用，上传临时入口不再构建 Admin；它检查全部用途的历史会话，不能把网页列表为空当作可删除证据。
 
@@ -59,7 +59,7 @@ Wrangler 保留 AGENT、Browser Run、模型配置、原 Worker 名称、DO 类�
 
 独立本地 Worker 使用真实模型和 Browser Run，从固定网页生成 small widget；实际 CLI 创建会话，test CLI 接收并保存三文件，本地 Chrome 再渲染通过，故障数 `0` 正确显示。历史 SSE 仍只有产物 metadata。证据为 `.playwright-mcp/web-only-live-dps4R9/result.json`、`widget.png` 和生成产物；维护 E2E 证据为 `.playwright-mcp/do-cleanup-e2e-zwHn91/result.json`。任务启动的 Worker、浏览器及临时持久化目录均已退出或清理。
 
-`npm run check` 在模型上限核验处失败：网关未声明 gpt-6.1-sol 的 contextWindow 和 maxTokens。模型注册表和核验脚本与备份一致，真实生成已通过；没有修改上限或跳过门禁。独立问题为 Beads `webclip_widget-bzo`，不能将顶层 check 报为通过。未重跑完整设计模型评测、线上保活驱逐或全部五个真实模型尺寸案例；三档渲染由浏览器回归覆盖，真实模型本次覆盖 small 样例。
+旧网关未声明模型上限的核验失败记录保留在 Beads `webclip_widget-bzo`，没有通过跳过门禁处理。当前本地网关及三模型定义的核验由[Luna 注册记录](../bug-fix/2026-11-06-luna-model-registration.md)维护，不将单项通过称为顶层 check 全部通过。未重跑完整设计模型评测、线上保活驱逐或全部五个真实模型尺寸案例；三档渲染由浏览器回归覆盖，真实模型本次覆盖 small 样例。
 
 ## 后果
 

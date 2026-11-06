@@ -1,10 +1,67 @@
-# HTTP 与 SSE 客户端协议
+# HTTP 与会话 SSE 客户端协议
 
 本文描述当前服务端对外行为，供 CLI 或其他 HTTP 客户端接入。请求路由由 [router.ts](../backend/src/router.ts) 和 [handlers.ts](../backend/src/do/handlers.ts) 实现，公共载荷类型见 [protocol.ts](../backend/src/protocol.ts)。SSE 的选择理由与幂等设计见[后端架构决策](../.agents/notes/implemented/architecture/2026-09-28-backend-architecture.md)。
 
+## 单次 HTTP 生成
+
+```http
+POST /v1/generate
+Content-Type: application/json
+Sec-MS-GEC: <provider token>
+Sec-MS-GEC-Version: 1-<version>
+```
+
+此入口不需要 x-webclip-user，不创建客户端会话，不返回 SSE，也不使用 WebSocket。Worker 在接收请求时读取 `Date.now()`，以 `tick % 20` 路由到 `generation-0` 至 `generation-19`，复用现有 AGENT 绑定。它不是最小负载选择；同毫秒请求可以落到同一个 DO，每个请求仍有独立工作区。
+
+后端不验证 GEC、字段 schema、URL、图片或 history，只解析 JSON；history 不参与模型上下文。Worker 到 DO 只复制上述两个 GEC 字段并设置 JSON Content-Type，不转发 Authorization、Cookie 或其他调用者 headers。客户端负责在 token 为空或版本不满足 `1-` 加非空后缀时停止发送；每次重试重新取得 provider headers。客户端生成请求使用 credentials omit、cache no-store，不设置 OAuth Authorization，不携带 Cookie。
+
+请求格式：
+
+```json
+{
+  "userQuery": "Show the selected results",
+  "url": "https://example.test/results?q=sample#section",
+  "pageTitle": "Results",
+  "htmlContent": "<html>...</html>",
+  "input_image": "data:image/png;base64,...",
+  "history": []
+}
+```
+
+| 字段 | 调用者提供的内容 |
+| --- | --- |
+| userQuery | 非空 UTF-8 用户指令 |
+| url | HTTP(S) 来源地址，query 和 fragment 原样保留 |
+| pageTitle | UTF-8 页面标题，可为空 |
+| htmlContent | 非空 UTF-8 HTML；选区相关 DOM 或经处理的全页 DOM |
+| input_image | 可选 PNG data URL，无图时省略 |
+| history | 当前固定为空数组，不提供多轮上下文 |
+
+请求等待 coding agent 完成后返回普通 JSON。服务端复用现有文件、bash、设计上下文与 preview_widget 工具；本入口的提示词、设计参数和预览画布固定为 360×440。内部三文件不作为响应 envelope 交付：extra.js 映射为 extractScript，widget.html 映射为 widgetHtml；title 使用传入的 pageTitle。
+
+自动预览受[PREVIEW_MAX_COUNT 配置](development.md#本地运行)约束，默认最多两次，0 不注册预览工具。达到上限后模型依据现有结果完成，不保证修订后的页面已再次通过浏览器校验；HTTP Success 仍表示生成文件可交付，不是无限次数的质量验证。
+
+```json
+{
+  "status": "Success",
+  "title": "Results",
+  "size": "fixed",
+  "width": 360,
+  "height": 440,
+  "extractScript": "(() => ({ items: [] }))()",
+  "widgetHtml": "<!doctype html><html>...</html>"
+}
+```
+
+成功响应为 HTTP 200、JSON 对象，status 精确为 `Success`。客户端要求 extractScript 和 widgetHtml 是非空、非纯空白、无 NUL 的 UTF-8 字符串。title/size 非字符串时按空字符串处理；width/height 非整数时按 0 处理，不增加枚举或数值范围限制。服务端当前固定返回上面的 size 与尺寸。
+
+所有正常成功与错误响应使用 Cache-Control: no-store, no-cache, must-revalidate。非 POST 返回 405；无法解析 JSON 返回 400 invalid_json；生成、配置或产物读取失败返回 500 generation_failed，status 为 Error，不暴露模型内部异常。服务器不以字段校验错误拒绝请求，但无效输入仍可能使生成失败。
+
+该请求没有应用层短超时、后台恢复或幂等键。客户端需允许长 HTTP 响应；CLI 每次尝试默认 10 分钟，并同步配置 Node 连接池的 headers/body timeout。按 [Worker 官方时限](https://developers.cloudflare.com/workers/platform/limits/)和 [DO 官方时限](https://developers.cloudflare.com/durable-objects/platform/limits/)，HTTP Worker 在客户端保持连接、DO HTTP 调用在调用者保持连接时均没有总墙钟时间硬上限。limits.cpu_ms 控制活跃 CPU 时间，等待模型网络或存储 I/O 不计入；增加 CPU 预算不等于延长 HTTP 等待时间。当前服务没有自定义 CPU 预算，不为长网络等待而增加该值。客户端、上游网关、运行时更新与网络中断仍可结束请求。失败或重试不会取回先前请求的结果，重试可能再次调用模型；正常返回或抛错后清理临时工作区与 pi 会话，进程被终止不保证 finally 执行。已有会话接口的 alarm 恢复不作用于本入口。
+
 ## 认证与寻址
 
-每个请求携带：
+会话请求携带：
 
 ```http
 x-webclip-user: <user-id>
@@ -17,7 +74,7 @@ x-webclip-user: <user-id>
 | 400 | `missing_user` | 用户标识为空或过长，响应同时给出 `header` |
 | 404 | `not_found` | 路由或会话不存在 |
 
-Worker 只转发 `/v1/sessions` 及其子路径；其他路径返回 404，不唤醒用户 DO。已有数据库中的非网页会话不会出现在列表中，按其 ID 读取、发送、订阅、中止或删除均返回 404。
+除上述直接生成入口外，Worker 只转发 `/v1/sessions` 及其子路径；其他路径返回 404，不唤醒用户 DO。已有数据库中的非网页会话不会出现在列表中，按其 ID 读取、发送、订阅、中止或删除均返回 404。
 
 ## 会话
 
@@ -166,13 +223,14 @@ source.html、v2 结构文件与图片作为不可变的本轮输入持久化；
 
 widget 构建的交付文件为 `out/extra.js`、`out/widget.html`、`out/meta.json`。普通对话不要求产生文件；`reason: completed` 表示 turn 执行结束，不代表所有 widget 质量检查通过。传输层仍收集 `/out` 的直接子文件，三文件要求由 prompt、预览和 CLI 保存校验执行。
 
-`meta.json` 只有 `size`，例如 `{"size":"middle"}`，有效值为 `small`、`middle`、`large`。明确指定尺寸时遵从用户；首次没有指定时，模型按所需内容选择能清晰呈现的最小尺寸，后续修改保留该尺寸，除非用户或内容需求改变。自动选择是模型判断，不保证每次任务得到相同档位。
+`meta.json` 只有 `size`，例如 `{"size":"middle"}`；共享解析器支持 `small`、`middle`、`large` 与 `fixed`。会话生成使用前三档：明确指定尺寸时遵从用户；首次没有指定时，模型按所需内容选择能清晰呈现的最小尺寸，后续修改保留该尺寸，除非用户或内容需求改变。自动选择是模型判断，不保证每次任务得到相同档位。直接 HTTP 生成始终使用 fixed，不参与自动选择。
 
 | size | 参考预览画布（CSS px） | 常见内容 |
 |---|---|---|
 | small | 160 × 160 | 单个指标、状态或简短摘要 |
 | middle | 344 × 160 | 多个指标、紧凑对比或少量条目 |
 | large | 344 × 360 | 较长列表或多个内容组 |
+| fixed | 360 × 440 | 直接 HTTP 入口的固定竖向画布 |
 
 尺寸由 [widget-contract.ts](../backend/src/widget-contract.ts) 定义，是项目预览基准。HTML 自适应客户端实际 viewport；宿主按 metadata 设置画布与截图缩放倍率。`#widget-root` 从 `(0, 0)` 铺满画布，不靠滚动展示内容，也不以三档基准值硬编码根宽高。
 

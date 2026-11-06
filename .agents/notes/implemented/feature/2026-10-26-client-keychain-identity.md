@@ -10,6 +10,8 @@ Status: implemented
 
 业务 HTTP 与 SSE 使用 `x-webclip-user`，服务端按该值调用 `idFromName`，不检查共享 AUTH_TOKEN，也不读取 Authorization。标识去除首尾空白后非空且不超过 200 个字符。CLI 使用调用者配置的稳定标识；LLM_API_KEY 只由后端访问。请求、错误与边界由[客户端协议](../../../../docs/protocol.md#认证与寻址)拥有。
 
+上述寻址适用于会话入口。[单次 HTTP 生成](../../implemented/feature/2026-11-05-direct-http-generation.md)不使用用户身份，按服务端时间分配到固定池；GEC 仅作为接收字段，不构成后端身份验证。
+
 标识是客户端声明的路由值，不是登录认证；知道目标标识即可访问对应网页会话。跨部署或换标识不会自动迁移 DO 历史，不能把空列表解释为服务器丢失了原用户记录。当前不增加账号、per-user token 或客户端身份恢复服务。
 
 原 iOS 身份设计以独立 Keychain service/account 原子保存 UUID，采用 AfterFirstUnlockThisDeviceOnly，不做 iCloud 同步。该设计依赖签名团队、Bundle ID 与访问权限：普通卸载不等于身份删除，Keychain 损坏、设备抹除或签名变更也不等于能恢复旧身份。客户端代码和共享资源入口已按[网页生成保留决策](../../implemented/simplification/2026-11-05-web-generation-only.md)移除；本记录保留旧 UUID 所属历史的含义，不宣称当前工程仍提供 Keychain 实现。

@@ -3,3 +3,6 @@
 
 LLM_BASE_URL=https://your-gateway/v1
 LLM_API_KEY=sk-...
+
+# Optional local override: 0 disables agent browser checks; default is 2.
+# PREVIEW_MAX_COUNT=2

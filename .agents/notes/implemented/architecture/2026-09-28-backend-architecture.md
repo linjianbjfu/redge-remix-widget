@@ -52,6 +52,8 @@ Status: implemented
 
 ## 决策
 
+本记录拥有会话 HTTP/SSE、持久化 turn 和恢复。[单次 HTTP 生成](../../implemented/feature/2026-11-05-direct-http-generation.md)复用会话构造与工作区工具，使用 20 个时间分桶 DO、独立临时工作区和完成后 JSON 返回；它不采用下述客户端会话、事件订阅或 alarm 恢复协议。
+
 本篇的验收标准如何分层承担，见[测试策略](../testing/2026-09-28-test-strategy.md)。
 
 ### 组件切分

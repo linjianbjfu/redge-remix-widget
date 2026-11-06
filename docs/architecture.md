@@ -2,6 +2,8 @@
 
 服务端接收网页与截图，在工作区生成 HTML widget、数据提取脚本与 metadata。模型、工具执行和历史均由服务端承担；test CLI 负责网页捕获、提交、产物下载和本地预览。
 
+单次入口为 `POST /v1/generate`：Worker 按本地毫秒 tick 取模 20 选择 `generation-N` 用户 DO，每请求创建独立临时工作区，调用同一 pi 会话工厂与工具，等待生成后返回 JSON 并清理。该路径不使用持久化 turn、Hub、SSE、客户端身份或历史；固定 360×440 的 brief 和设计参数通过同一资源加载器接入。传输与错误由[单次 HTTP 协议](protocol.md#单次-http-生成)拥有。下文的历史、恢复与订阅描述适用于会话入口。
+
 ```text
 test CLI ──HTTP/SSE──► Worker ──► UserAgentDO（每用户一个）
                                    ├── pi AgentSession：模型与工具编排

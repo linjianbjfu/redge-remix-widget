@@ -36,6 +36,33 @@ const MODELS = [
     maxTokens: 128_000,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   },
+  {
+    id: "gpt-6-luna",
+    name: "GPT-6 Luna",
+    reasoning: true,
+    input: ["text", "image"] as ("text" | "image")[],
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  },
+  {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    reasoning: true,
+    input: ["text", "image"] as ("text" | "image")[],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  },
+  {
+    id: "mai-code-2-flash",
+    name: "MAI-Code-2-Flash",
+    reasoning: true,
+    input: ["text", "image"] as ("text" | "image")[],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  },
 ] as const;
 
 export function resolveProvider(env: Env): ProviderConfig {

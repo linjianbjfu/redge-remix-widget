@@ -29,6 +29,10 @@ npm run dev
 
 [wrangler.jsonc](../backend/wrangler.jsonc) 声明 DO 和 Browser Run 绑定、provider 和默认模型；模型注册表由 [model.ts](../backend/src/agent/model.ts) 维护。`MAX_CONCURRENT_TURNS` 虽已声明，目前执行路径没有读取它，不能据此认为跨会话并发受到限制。
 
+注册表支持 `gpt-6.1-sol`、`gpt-6-luna`、`gpt-5.6-luna` 和 `mai-code-2-flash`，DEFAULT_MODEL 选择其中一个。上下文上限分别为 1050000、1000000、1050000、1050000，输出上限均为 128000。默认名称不会自动创建模型定义；新增 ID 要同时注册并核对网关上限。修改本地配置不自动更新线上 Worker。
+
+`backend/wrangler.jsonc` 的 `vars.PREVIEW_MAX_COUNT` 控制每次 agent 运行的自动浏览器检查次数，代码缺省值为 2，当前配置显式选择 `"1"`，可设为 `"0"` 关闭。也可在本地 `.dev.vars` 覆盖。必须是非负整数；失败尝试同样计数，额度耗尽后移除活动预览工具。直接 HTTP 每个请求独立，会话 turn 的恢复执行建立新的运行预算。0 只关闭生成过程的 preview_widget，不影响 CLI 捕获网页或用户手动 preview。该配置不会自动同步到已部署 Worker。
+
 ## 手动清理用户 DO
 
 [清理脚本](../backend/scripts/cleanup-empty-dos.mjs)使用仓库安装的 Wrangler 登录凭据和 `backend/wrangler.jsonc` 的 Worker。需要目标账号的 Worker/版本部署与 DO 枚举权限，workers.dev 入口需已启用。先运行 `npm ci` 安装锁定依赖，再从仓库根目录执行：
@@ -61,7 +65,7 @@ node backend/scripts/cleanup-empty-dos.mjs --id <DO_ID> --apply # 清空指定�
 | `npm test` | Workers runtime 中的测试 |
 | `npm run test:agent` | 真实 pi SDK 的 prompt、UTF-8 工具及多模态网关请求 |
 | `npm run test:cli` | Node 中的 bundle 保存、本地预览参数/等待/写入/HTTP 服务及 CLI 命令入口 |
-| `npm run test:browser` | 本地 Chrome 中的提取、三档布局、溢出/动画及本地预览生命周期 |
+| `npm run test:browser` | 本地 Chrome 中的提取、会话三档/fixed 布局、捕获、溢出/动画及本地预览生命周期 |
 | `npm run test:do-cleanup` | 通用 DO 维护工具的参数、部署协调、绑定保护与恢复 |
 | `npm run verify-docs` | README、根指令和 docs 中的本地 Markdown 链接目标 |
 | `npm run verify-notes` | Agent Note 分类、格式与归档封存 |
@@ -80,6 +84,8 @@ CLI 测试与实现并置于 `test-cli/*.test.mjs`，使用独立临时目录与
 文档链接检查只检查本地文件或目录是否存在，不检查 URL 可访问性、标题锚点或行为描述。新改的命令与行为需要相应的执行证据；不能运行的部分应在交付时说明原因。
 
 ### 真实服务检查
+
+单次 HTTP 入口可按 [CLI 的 generate 用法](test-cli.md#单次-http-生成)，对运行中的本地 Worker 提交 `test-cli/fixtures/generate-request.json`；默认画布为 360×440。后端不验证 GEC，本地可用 CLI 文档中的环境变量 provider。完成后检查 response.json、三文件及 preview 输出。生成仍使用真实模型和 Browser Run，有模型费用；静态页面回放不能代替原站数据验证。
 
 设计变更另运行 `npm run e2e:design`，使用下方相同的 CLI 环境变量。它覆盖三档尺寸的密集内容取舍及数据更新、明确全量与小尺寸冲突、进度与历史、跨主题选图与无关图省略、图片更新及读取失败降级、深色/不用图的后续修改、缺少历史、自由组合与 canvas-only 失败；保留产物、截图和用量记录供目视检查。运行方式及扩展规则见 [Design System](design-system.md)。
 
@@ -124,15 +130,17 @@ rm -rf ~/Library/Caches/.wrangler/chrome
 
 ## 部署
 
-在具备目标 Cloudflare 账户权限的环境执行：
+当前线上 Worker 为 `redge-remix-widget`，地址为 `https://redge-remix-widget.linjsd.workers.dev`。它使用独立的 DO 命名空间与 Browser Run 绑定；模型地址和密钥保存在该 Worker 的 secrets 中。运行配置保留原默认名称，更新这个新服务时显式指定 --name：
 
 ```bash
-npx wrangler secret put --config backend/wrangler.jsonc LLM_API_KEY
-npx wrangler secret put --config backend/wrangler.jsonc LLM_BASE_URL
-npm run deploy
+npx wrangler secret put --config backend/wrangler.jsonc --name redge-remix-widget LLM_API_KEY
+npx wrangler secret put --config backend/wrangler.jsonc --name redge-remix-widget LLM_BASE_URL
+npm run deploy -- --name redge-remix-widget
 ```
 
-不要把这些 secret 以空值声明在 `backend/wrangler.jsonc` 的 `vars` 中，空值会覆盖 secret。部署后将 `WEBCLIP_URL` 指向返回的服务地址，再运行上述端到端检查。
+首次部署也可用 Wrangler 的 --secrets-file 同版本上传 JSON 或 dotenv 密钥文件；只包含所需的 LLM_BASE_URL 和 LLM_API_KEY，文件保存在受限临时目录，部署后删除。不要把这些 secret 以空值声明在 `backend/wrangler.jsonc` 的 `vars` 中，空值会覆盖 secret。部署后将 `WEBCLIP_URL` 指向返回的服务地址，再运行上述端到端检查。
+
+长 HTTP 等待不需要设置 limits.cpu_ms：它控制 CPU 预算，不控制请求总时长。Worker/DO 在连接保持时没有总墙钟时间硬上限；客户端与上游网关的 timeout 仍需分别配置。具体规则见[单次 HTTP 协议](protocol.md#单次-http-生成)。
 
 UUID 仅用于路由，调用者可声明任意 `x-webclip-user`；账号和可信用户身份验证不在当前接口中。
 

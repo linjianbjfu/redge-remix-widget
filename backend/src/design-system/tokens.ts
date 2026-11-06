@@ -18,7 +18,7 @@ export const TOKENS_SCHEMA = Type.Object({
   line: positive,
   radius: Type.Object({ image: positive, badge: positive, group: positive }, { additionalProperties: false }),
   themes: Type.Object({ light: colors, dark: colors }, { additionalProperties: false }),
-  sizes: Type.Object({ small: size, middle: size, large: size }, { additionalProperties: false }),
+  sizes: Type.Object({ small: size, middle: size, large: size, fixed: size }, { additionalProperties: false }),
 }, { additionalProperties: false });
 
 /** Defaults calibrated for the project's preview canvases; user style may override them. */
@@ -35,5 +35,6 @@ export const TOKENS: Static<typeof TOKENS_SCHEMA> = {
     small: { padding: 12, gap: 8, hero: 40, title: 17, body: 14, caption: 12 },
     middle: { padding: 16, gap: 12, hero: 36, title: 18, body: 15, caption: 12 },
     large: { padding: 20, gap: 12, hero: 42, title: 20, body: 15, caption: 12 },
+    fixed: { padding: 20, gap: 16, hero: 44, title: 20, body: 16, caption: 12 },
   },
 };

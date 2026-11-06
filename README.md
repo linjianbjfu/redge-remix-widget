@@ -1,6 +1,8 @@
 # webclip_widget
 
-把网页转成 widget 的 agent 服务端。[pi coding agent](https://github.com/earendil-works/pi) 作为 SDK 运行在 Cloudflare Workers + Durable Objects 上。工具在服务端执行，客户端可通过 HTTP/SSE 提交任务并读取结果。网页生成交付 `widget.html`、`extra.js` 和 `meta.json`；test CLI 支持网页捕获、生成、下载和本地预览。
+把网页转成 widget 的 agent 服务端。[pi coding agent](https://github.com/earendil-works/pi) 作为 SDK 运行在 Cloudflare Workers + Durable Objects 上。`POST /v1/generate` 接收一次 JSON 请求并返回 360×440 的 Widget HTML 与提取脚本，按服务端时间 tick 分配到 20 个 DO。现有会话 HTTP/SSE 接口继续提供三文件生成。test CLI 支持两种入口，以及网页捕获、生成、下载和本地预览。
+
+线上入口：`POST https://redge-remix-widget.linjsd.workers.dev/v1/generate`。部署与更新命令见[开发指南](docs/development.md#部署)。
 
 ## 目录
 

@@ -25,7 +25,7 @@ export function validateCaptureSizes(sizes) {
   if(sizes.some(size=>size>CAPTURE_LIMITS.sourceBytes)||sizes.reduce((sum,size)=>sum+size,0)>24*1024*1024)throw new Error('附件超过单文件 16 MiB 或合计 24 MiB，请缩小选区或减少附件');
 }
 
-async function captureOnce(page, compositor) {
+async function captureOnce(page, compositor, pngOnly) {
   const snapshot = await page.evaluate(() => window.__webclipCapture.snapshot());
   const mode = snapshot.regions.length ? 'regions' : 'page';
   const size = snapshot.documentSize;
@@ -46,7 +46,7 @@ async function captureOnce(page, compositor) {
     }
     const after = await page.evaluate(() => window.__webclipCapture.snapshot());
     if (snapshot.source !== after.source || JSON.stringify(snapshot.dom) !== JSON.stringify(after.dom) || JSON.stringify(snapshot.regions) !== JSON.stringify(after.regions)) throw new Error('页面在捕获期间发生变化，请重新选择/捕获');
-    const image = await composeCaptureImage(compositor, tiles, mode, size);
+    const image = await composeCaptureImage(compositor, tiles, mode, size, pngOnly);
     const imageId = mode==='page'?'page-image':'regions-image';
     const filename = image ? (mode==='page'?'page':'regions')+(image.mimeType==='image/png'?'.png':'.jpg') : null;
     const regions = snapshot.regions.map(({id,xpath,sourceXPath,rect,text}) => {
@@ -75,7 +75,7 @@ async function waitCaptureState(page, states, signal) {
 }
 
 /** Returns temporary upload paths with dispose(), or null when the user cancels. */
-export async function capturePage(options, { headless = false, signal, onPage, report = console.log } = {}) {
+export async function capturePage(options, { headless = false, signal, onPage, report = console.log, pngOnly = false } = {}) {
   const source = captureSource(options);
   if (!source) return null;
   const stop=new AbortController(), cancel=()=>stop.abort();
@@ -103,8 +103,8 @@ export async function capturePage(options, { headless = false, signal, onPage, r
         if(await page.evaluate(()=>window.__webclipCapture.state.status)==='cancelled')return null;
       }
       try {
-        try { result=await captureOnce(page,compositor); }
-        catch(error) { if(!String(error).includes('捕获期间'))throw error; result=await captureOnce(page,compositor); }
+        try { result=await captureOnce(page,compositor,pngOnly); }
+        catch(error) { if(!String(error).includes('捕获期间'))throw error; result=await captureOnce(page,compositor,pngOnly); }
       } catch(error) {
         if(!options.select)throw error;
         const message=(error instanceof Error?error.message:String(error)).split('\n')[0];
@@ -131,7 +131,7 @@ export async function capturePage(options, { headless = false, signal, onPage, r
     const sizes=await Promise.all(paths.map(path=>stat(path)));
     validateCaptureSizes(sizes.map(file=>file.size));
     const saved=directory;directory=undefined;
-    return {capture,files:paths,dispose:()=>rm(saved,{recursive:true,force:true})};
+    return {capture,files:paths,pageTitle:result.snapshot.pageTitle,dispose:()=>rm(saved,{recursive:true,force:true})};
   } catch(error) {
     if(stop.signal.aborted)return null;
     throw error;

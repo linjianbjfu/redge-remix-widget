@@ -1,6 +1,6 @@
 /** Compose captured pixels without changing the source page's layout or viewport. */
-export async function composeCaptureImage(page, tiles, mode, originalSize) {
-  return page.evaluate(async ({tiles,mode,originalSize}) => {
+export async function composeCaptureImage(page, tiles, mode, originalSize, pngOnly = false) {
+  return page.evaluate(async ({tiles,mode,originalSize,pngOnly}) => {
     const bitmaps=await Promise.all(tiles.map(tile=>new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(Error('Cannot decode screenshot'));img.src='data:image/png;base64,'+tile.data;})));
     const max=mode==='page'?768:1200, gap=8, label=24;
     if(!tiles.length)return null;
@@ -26,9 +26,9 @@ export async function composeCaptureImage(page, tiles, mode, originalSize) {
     });
     let url=canvas.toDataURL('image/png');
     const bytes=url=>Math.floor(url.split(',')[1].length*3/4)-(url.endsWith('==')?2:url.endsWith('=')?1:0);
-    if(bytes(url)>2*1024*1024)url=canvas.toDataURL('image/jpeg',.9);
+    if(bytes(url)>2*1024*1024&&!pngOnly)url=canvas.toDataURL('image/jpeg',.9);
     if(bytes(url)>2*1024*1024)throw Error('截图超过 2 MiB，请减少区域');
     const mimeType=url.startsWith('data:image/png')?'image/png':'image/jpeg';
     return {data:url.split(',')[1],url,mimeType,bytes:bytes(url),width:canvas.width,height:canvas.height,originalWidth:originalSize.width,originalHeight:originalSize.height,boxes:layout.boxes};
-  }, {tiles,mode,originalSize});
+  }, {tiles,mode,originalSize,pngOnly});
 }

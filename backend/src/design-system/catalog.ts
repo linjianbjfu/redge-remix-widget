@@ -23,16 +23,16 @@ export function patternIndex(catalog = CATALOG): string {
   return sorted(catalog.patterns).map(pattern => `${pattern.id}: ${pattern.summary}`).join("\n");
 }
 
-export function designParameters(catalog = CATALOG) {
+export function designParameters(catalog = CATALOG, sizes: readonly WidgetSize[] = Object.keys(WIDGET_SIZES) as WidgetSize[]) {
   return Type.Object({
     pattern: Type.Union(patternIds(catalog).map(id => Type.Literal(id)), { description: "Composition matching the observed content; freeform for other compositions." }),
-    size: Type.Union(Object.keys(WIDGET_SIZES).map(size => Type.Literal(size))),
+    size: Type.Union(sizes.map(size => Type.Literal(size))),
     include_examples: Type.Optional(Type.Boolean({ description: "Include up to two short reference analyses when more design guidance is needed. Defaults to false." })),
   }, { additionalProperties: false });
 }
 
 export function designContext(args: unknown, catalog = CATALOG) {
-  if (!Check(designParameters(catalog), args)) throw new Error("Invalid design context request: choose a listed pattern and small, middle or large size.");
+  if (!Check(designParameters(catalog), args)) throw new Error("Invalid design context request: choose a listed pattern and supported size.");
   const { pattern: id, size, include_examples } = args as { pattern: string; size: WidgetSize; include_examples?: boolean };
   const pattern = catalog.patterns.find(item => item.id === id)!;
   const result = {

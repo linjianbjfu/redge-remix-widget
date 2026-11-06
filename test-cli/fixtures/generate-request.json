@@ -1,0 +1,7 @@
+{
+  "userQuery": "Show the monthly fault count and running-device count in a clear widget.",
+  "url": "https://example.test/results?q=sample#section",
+  "pageTitle": "设备状态",
+  "htmlContent": "<!doctype html><html><head><meta charset=\"utf-8\"><title>设备状态</title></head><body><main><h1>本月设备状态</h1><p>故障数 <strong id=\"fault-count\">0</strong></p><p>运行设备 <strong id=\"running-count\">12</strong></p></main></body></html>",
+  "history": []
+}

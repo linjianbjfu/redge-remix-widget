@@ -6,6 +6,8 @@
  *
  *   webclip preview --out DIR [--source PATH]
  *                                       extract data and open a local widget
+ *   webclip generate --json request.json [--out DIR]
+ *                                       generate once over HTTP JSON, 360×440
  *   webclip sessions                    list
  *   webclip new [title]                 create
  *   webclip prompt <session> <text> [--file PATH]... [--url URL] [--select] [--gzip]
@@ -46,6 +48,11 @@ function config() {
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  if (command === 'generate') {
+    const {runGenerateCommand} = await import('./generate.mjs');
+    await runGenerateCommand(args);
+    return;
+  }
   if (command === "preview") {
     const { runPreviewCommand } = await import("./local-preview.mjs");
     await runPreviewCommand(args);
@@ -172,7 +179,7 @@ async function main() {
       return;
     }
     default:
-      console.error("usage: webclip <sessions|new|prompt|chat|events|timeline|abort|rm|check|preview>");
+      console.error("usage: webclip <generate|sessions|new|prompt|chat|events|timeline|abort|rm|check|preview>");
       process.exit(2);
   }
 }
